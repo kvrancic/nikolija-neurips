@@ -526,6 +526,7 @@ def recover_dimension_flow_parallel(
     selection_abs_tol: float = 2e-3,
     selection_rel_tol: float = 0.05,
     selection_floor_slack: float = 5e-3,
+    selection_floor_multiplier: Optional[float] = None,
     next_improvement_abs: float = 2e-3,
     next_improvement_rel: float = 0.10,
     hidden_dim: int = 64,
@@ -568,7 +569,13 @@ def recover_dimension_flow_parallel(
 
     # Data-dependent selection threshold.
     # If the user did not pass an explicit --threshold, estimate the finite-sample
-    # real-vs-real MMD floor on validation data and add a small slack.
+    # real-vs-real MMD floor on validation data, then either:
+    #   - multiply by `selection_floor_multiplier` (preferred, scales with n),
+    #   - or add `selection_floor_slack` (legacy, additive slack).
+    # The multiplicative form is much better behaved across n: at small n the floor
+    # is large and the threshold is generous; at large n the floor is small and the
+    # threshold tightens proportionally, preventing trivially-low-dim solutions
+    # from passing.
     effective_threshold = selection_threshold
     data_floor = None
     if effective_threshold is None:
@@ -579,7 +586,10 @@ def recover_dimension_flow_parallel(
             n_repeats=5,
             seed=base_seed + 999,
         )
-        effective_threshold = data_floor + selection_floor_slack
+        if selection_floor_multiplier is not None:
+            effective_threshold = data_floor * selection_floor_multiplier
+        else:
+            effective_threshold = data_floor + selection_floor_slack
 
     print(f"\n[{label}] recover_dimension_flow_parallel")
     print(f"  n={n}, d_obs={d_obs}, degree={degree}, restarts={n_restarts}, workers={max_workers}")
@@ -758,6 +768,7 @@ def check2_dim_recovery(args) -> Tuple[bool, List[int], List[float], int]:
         selection_abs_tol=args.selection_abs_tol,
         selection_rel_tol=args.selection_rel_tol,
         selection_floor_slack=args.view_floor_slack,
+        selection_floor_multiplier=getattr(args, "view_floor_multiplier", None),
         next_improvement_abs=args.next_improvement_abs,
         next_improvement_rel=args.next_improvement_rel,
         base_seed=202,
@@ -805,6 +816,7 @@ def run_full_pipeline_once(args, seed: int, label: str = "full") -> Tuple[bool, 
         selection_abs_tol=args.selection_abs_tol,
         selection_rel_tol=args.selection_rel_tol,
         selection_floor_slack=args.view_floor_slack,
+        selection_floor_multiplier=getattr(args, "view_floor_multiplier", None),
         next_improvement_abs=args.next_improvement_abs,
         next_improvement_rel=args.next_improvement_rel,
         base_seed=1000 + seed * 10 + 1,
@@ -826,6 +838,7 @@ def run_full_pipeline_once(args, seed: int, label: str = "full") -> Tuple[bool, 
         selection_abs_tol=args.selection_abs_tol,
         selection_rel_tol=args.selection_rel_tol,
         selection_floor_slack=args.view_floor_slack,
+        selection_floor_multiplier=getattr(args, "view_floor_multiplier", None),
         next_improvement_abs=args.next_improvement_abs,
         next_improvement_rel=args.next_improvement_rel,
         base_seed=1000 + seed * 10 + 2,
@@ -847,6 +860,7 @@ def run_full_pipeline_once(args, seed: int, label: str = "full") -> Tuple[bool, 
         selection_abs_tol=args.selection_abs_tol,
         selection_rel_tol=args.selection_rel_tol,
         selection_floor_slack=args.joint_floor_slack,
+        selection_floor_multiplier=getattr(args, "joint_floor_multiplier", None),
         next_improvement_abs=args.next_improvement_abs,
         next_improvement_rel=args.next_improvement_rel,
         base_seed=1000 + seed * 10 + 3,

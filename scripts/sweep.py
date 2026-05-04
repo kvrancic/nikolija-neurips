@@ -107,6 +107,8 @@ def build_v6_args(args, n: int) -> SimpleNamespace:
         selection_rel_tol=args.selection_rel_tol,
         view_floor_slack=args.view_floor_slack,
         joint_floor_slack=args.joint_floor_slack,
+        view_floor_multiplier=args.view_floor_multiplier,
+        joint_floor_multiplier=args.joint_floor_multiplier,
         next_improvement_abs=args.next_improvement_abs,
         next_improvement_rel=args.next_improvement_rel,
     )
@@ -213,6 +215,13 @@ def main() -> None:
     parser.add_argument("--selection-rel-tol", type=float, default=0.05)
     parser.add_argument("--view-floor-slack", type=float, default=5e-3)
     parser.add_argument("--joint-floor-slack", type=float, default=5e-4)
+    # Multiplicative threshold = data_floor * multiplier. Recommended over the
+    # additive slack at large n where the floor drops below the slack and the
+    # additive form turns into a pass-anything threshold.
+    parser.add_argument("--view-floor-multiplier", type=float, default=1.20,
+                        help="If set, threshold = data_floor * this. Overrides --view-floor-slack.")
+    parser.add_argument("--joint-floor-multiplier", type=float, default=1.05,
+                        help="If set, threshold = data_floor * this for joint dim recovery.")
     parser.add_argument("--next-improvement-abs", type=float, default=2e-3)
     parser.add_argument("--next-improvement-rel", type=float, default=0.10)
 
