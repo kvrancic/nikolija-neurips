@@ -50,11 +50,14 @@ smoke-cluster:
 # ---- Real sweeps ----
 # Powers and seed counts match the plan; tune via env vars per Nikolija's
 # call (q1=q2=p, degree=2, exponential noise hard-coded in core.py).
+# Powers/seeds tightened on May 4 after the 4-row probe showed ~8 min/row.
+# Original plan was powers=5-17 × 20 seeds = 260 rows / sweep — would have
+# blown the deadline. Per-p tail dropped where it adds nothing to the curve.
 .PHONY: sweep-p5
 sweep-p5:
 	$(PY) scripts/sweep.py \
 	    --p-true 5 --q1 5 --q2 5 --degree 2 \
-	    --powers 5-17 --seeds-per-n 20 \
+	    --powers 7-15 --seeds-per-n 10 \
 	    --gpus $(GPUS) --n-restarts $(RESTARTS) \
 	    --n-iter $(N_ITER) --n-samples $(N_SAMPLES) \
 	    --out-dir $(RESULTS)/p5 --csv-name p_recovery_sweep.csv
@@ -64,7 +67,7 @@ sweep-p5:
 sweep-p20:
 	$(PY) scripts/sweep.py \
 	    --p-true 20 --q1 20 --q2 20 --degree 2 \
-	    --powers 7-17 --seeds-per-n 10 \
+	    --powers 8-13 --seeds-per-n 8 \
 	    --gpus $(GPUS) --n-restarts $(RESTARTS) \
 	    --n-iter $(N_ITER) --n-samples $(N_SAMPLES) \
 	    --out-dir $(RESULTS)/p20 --csv-name p_recovery_sweep.csv
@@ -74,7 +77,7 @@ sweep-p20:
 sweep-p40:
 	$(PY) scripts/sweep.py \
 	    --p-true 40 --q1 40 --q2 40 --degree 2 \
-	    --powers 9-17 --seeds-per-n 5 \
+	    --powers 9-12 --seeds-per-n 5 \
 	    --gpus $(GPUS) --n-restarts $(RESTARTS) \
 	    --n-iter $(N_ITER) --n-samples $(N_SAMPLES) \
 	    --out-dir $(RESULTS)/p40 --csv-name p_recovery_sweep.csv
