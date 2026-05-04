@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Results and run artifacts
+results/
+sweep_results/
+*.log
+*.png
+!reference/**/*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets — never commit
+*.pem
+id_*
+secrets*
+.env
+.env.*
+**/known_hosts
+
+# Compute
+*.ckpt
+*.pt
+checkpoints/

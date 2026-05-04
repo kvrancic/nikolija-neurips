@@ -1,0 +1,78 @@
+Ovo ce mi trebat: 
+
+ 1. Her existing code repository. She must have a working implementation for Algorithm 1 (Gaussian) — those plots exist. The Algorithm 3 work should plug into the same data generator, evaluation harness, and plotting code. Ask for a GitHub/GitLab invite, a zip, or even a Colab. Without this you'll either reinvent her pipeline (waste) or produce results she can't drop into the paper (worse).
+ 2. The exact simulation/SCM specification used for the Gaussian plots:
+   - the DAG / SCM that generates Z (slide 32 alludes to it but never states it),
+   - the polynomial / exponential mixing function φ and G (degree, basis — slide 28 says "exponential basis"),
+   - the true latent dimensions |Z_L|, |Z_{I_1}|, |Z_{I_2}| used,
+   - p_max, T, τ, learning rate, batch sizes, number of seeds.
+ 3. What "applied to already constructed latent space" means concretely. Two plausible readings:
+   - (a) Algorithm 3 should consume the latent recovered by Algorithm 1 / an upstream stage and refine it under the general
+ (non‑Gaussian) mixing — i.e. integrate, don't replace; or
+   - (b) She has a pre‑existing simulation harness with a constructed Z, and just wants Algorithm 3 wired into it.
+ These are very different deliverables. Get a one‑sentence clarification.
+ 4. The current paper draft (Overleaf link or PDF). Slides hide details — the formal theorems, the definition of MMD² (the bar in MMD²(X̂,
+  X) likely means median‑heuristic kernel bandwidth, but confirm), the rank condition rank(G) = n_φ, and the identifiability conditions
+ all matter for a faithful implementation. Read access is enough.
+ 5. The NeurIPS deadline and what subset of results she needs by when. Drives prioritization (e.g. just reproduce the Gaussian curves
+ under the general algorithm vs. also add a real‑data experiment).
+ 6. Whether real‑world data experiments are in scope for this submission. "Experiments on real‑world data" is in her Future Work slide,
+ which suggests no for this submission — but ask. If yes, which dataset (CITE‑seq, scNMT‑seq, the Broad's own?).
+7. Jaccard between which sets? Recovered shared dimensions vs ground truth, presumably, but confirm. Same for |p - p̂|. *
+
+[02:31, 5/3/2026] +381 63 7305049: 2. Using the same SCM and DAG as Sturma et al., but removing all constraints on children https://arxiv.org/abs/2302.00993. The true polynomial mixing degree is up to 20, the recovered degree is hypothesized to be up to 60 (3x true)
+moj haotican writeup
+[02:42, 5/3/2026] +381 63 7305049: kazem gptiju da odg na pitanja i dobijem ovo hahahha
+[02:44, 5/3/2026] +381 63 7305049: 3. a
+[02:46, 5/3/2026] +381 63 7305049: 7. between the recovered shared coordinate set and the ground-truth shared coordinate set.
+[02:47, 5/3/2026] +381 63 7305049: 5. neurips deadline may 6 AoE
+[02:48, 5/3/2026] +381 63 7305049: 6. The current focus should probably be on getting the synthetic experiments clean and consistent with the theory, but real data are in scope for the submission
+main issue: adding exponential noise!! (general case)
+[02:51, 5/3/2026] +381 63 7305049: gaussian case (special case): # ── DAG Sampling ──────────────────────────────────────────────────────────────
+def sample_er_dag(p, q1, q2, er_prob, rng):
+    h = p + q1 + q2
+    W = np.zeros((h, h))
+    I1 = list(range(p, p + q1))
+    I2 = list(range(p + q1, h))
+    L  = list(range(p))
+    children_pool = I1 + I2
+    rng.shuffle(children_pool)
+    for idx, k in enumerate(L):
+        c1, c2 = children_pool[2*idx], children_pool[2*idx+1]
+        for c in (c1, c2):
+            W[k, c] = rng.choice([-1, 1]) * rng.uniform(0.25, 1.0)
+    for i in range(h):
+        for j in range(i + 1, h):
+            if (i in I1 and j in I2) or (i in I2 and j in I1):
+                continue
+            if W[i, j] == 0 and rng.rand() < er_prob:
+                W[i, j] = rng.choi…
+[02:52, 5/3/2026] +381 63 7305049: Ideally: |p-\hatp| -> 0, Jaccard->1
+[02:55, 5/3/2026] +381 63 7305049: shur should be calculated on \hat z1 and \hat z2
+[02:55, 5/3/2026] +381 63 7305049: import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import plotext as plt
+import time
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ── DAG Sampling ──────────────────────────────────────────────────────────────
+def sample_er_dag(p, q1, q2, er_prob, rng):
+    h = p + q1 + q2
+    W = np.zeros((h, h))
+    I1 = list(range(p, p + q1))
+    I2 = list(range(p + q1, h))
+    L  = list(range(p))
+    children_pool = I1 + I2
+    rng.shuffle(children_pool)
+    for idx, k in enumerate(L):
+        c1, c2 = children_pool[2*idx], children_pool[2*idx+1]
+        for c in (c1, c2):
+            W[k, c] = rng.choice([-1, 1]) * rng.uniform(0.25, 1.0)
+    for i in range(h):
+        for j in range(i + 1, h):
+            if (i …
+[02:57, 5/3/2026] +381 63 7305049: Our objective is to generate plots for $p \in \{5, 20, 40\}$ that demonstrate a decreasing trend in Mean Absolute Error (MAE) and a corresponding increase in the Jaccard index
+[03:00, 5/3/2026] +381 63 7305049: hvala karlo 🫶🏼

@@ -1,0 +1,60 @@
+
+U suštini, imaš Chief modality, imaš Extensive modality.
+
+Odnosno, oba kao Observe Data za oba modalitija.
+
+Imaš nekog Observe Data.
+
+I koristeći te Observe Data, naprimjer, DNA sequencing and cell imaging.
+
+Cell imaging is cheap and DNA sequencing is expensive.
+
+I oni su like Pair Data.
+
+Znači, svaki su pair.
+
+Za jednu sliku cijelije, ti imaš DNA sequence koji je njen par.
+
+I sada, ti želiš da iz tih Pair Data naučiš Cell Latent Space.
+
+Kako izgledaju Domain Specific Parts i kako izgleda Shared Space.
+
+I sada, ti si trenirala da naučiš Latent Space.
+
+Znači, on je naučio što je sve karakteristično za DNA sequencing i što je sve karakteristično za cell imaging i što je zajedničko.
+
+Sada, kažeš, ok, ja više nemam pristup DNA sequencing-u, hoću da koristim neke nove slike cijelija i hoću da vidim kako izgleda njihov palar sekvencije gena.
+
+Ok. Kako to uradim?
+
+Pošto već imam trenirao Latent Space, znam kako on izgleda.
+
+On može samo koristit ći nove podatke, nove slike cijelija, mogu da koristim Latent Space, nove slike cijelija, da prediktujem kako će da mi izgleda DNA sequence za svaki, za svaku od slika cijelija.
+
+Dobro.
+
+I to je glavna pointa ovog projekta.
+
+Dobro.
+
+Ja sad kužim već samo projekt na konceptualnoj razini.
+
+Ne razumješ tehnički.
+
+Kako, koje, koje mehanike ti koristiš za te stvari?
+
+Utrboš konflikovanje.
+
+Jel to deep learning?
+
+Jel to matematika?
+
+U suštini, šta sam ja koristila najviše je matematika.
+
+Smisili smo matematičku metodu, kako možemo da recoverujemo cijel latest piece.
+
+Međutim, da bi ti to mogo da implementiraš, da bi mogo da koristiš u realnosti, možda koristiš i nkodere, treba da koristiš optimizacijanu algoritmu.
+
+Ovo je on moving, going, speed.
+
+Hvala.
