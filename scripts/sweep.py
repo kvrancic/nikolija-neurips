@@ -216,6 +216,14 @@ def main() -> None:
     parser.add_argument("--next-improvement-abs", type=float, default=2e-3)
     parser.add_argument("--next-improvement-rel", type=float, default=0.10)
 
+    # Theorem 1 / Jaccard
+    parser.add_argument("--jaccard-n-iter-train", type=int, default=400,
+                        help="Iterations for the per-view flow refit used by Theorem 1.")
+    parser.add_argument("--jaccard-n-iter-inv", type=int, default=300,
+                        help="Iterations for per-sample latent inversion.")
+    parser.add_argument("--jaccard-n-restarts", type=int, default=2,
+                        help="Restarts for the per-view flow refit. Higher = more stable, slower.")
+
     args = parser.parse_args()
 
     powers = parse_powers(args.powers)
@@ -251,7 +259,10 @@ def main() -> None:
         "p_true", "q1", "q2", "d1_true", "d2_true", "dj_true",
         "d_obs", "degree",
         "d1_hat", "d2_hat", "dj_hat", "p_hat",
-        "abs_error", "success", "runtime_sec", "detail_log", "error",
+        "abs_error", "success", "runtime_sec",
+        # Theorem 1 / Jaccard:
+        "jaccard", "shared_recovered", "train_mmd_view1", "train_mmd_view2", "jaccard_reason",
+        "detail_log", "error",
     ]
 
     write_header = not csv_path.exists()
@@ -287,6 +298,28 @@ def main() -> None:
                                 label=label,
                             )
 
+                            # Theorem 1 / Jaccard. Run on the first GPU (or CPU)
+                            # to avoid further multi-process/CUDA fan-out here.
+                            jaccard_gpu = v6_args.gpu_ids[0] if v6_args.gpu_ids else None
+                            jres = jaccard_for_pipeline_run(
+                                p_true=args.p_true,
+                                q1=args.q1,
+                                q2=args.q2,
+                                n=n,
+                                d_obs=d_obs,
+                                degree=args.degree,
+                                seed=seed,
+                                d1_hat=int(d1_hat),
+                                d2_hat=int(d2_hat),
+                                p_hat=int(p_hat),
+                                gpu_id=jaccard_gpu,
+                                n_iter_train=args.jaccard_n_iter_train,
+                                n_iter_inv=args.jaccard_n_iter_inv,
+                                n_samples=args.n_samples,
+                                lr=args.lr,
+                                n_restarts=args.jaccard_n_restarts,
+                            )
+
                     runtime = time.time() - t0
                     abs_error = abs(int(p_hat) - int(args.p_true))
 
@@ -311,16 +344,30 @@ def main() -> None:
                         "abs_error": abs_error,
                         "success": int(bool(passed)),
                         "runtime_sec": f"{runtime:.2f}",
+                        "jaccard": "" if (jres["jaccard"] != jres["jaccard"]) else f"{jres['jaccard']:.4f}",
+                        "shared_recovered": ",".join(str(i) for i in jres["recovered"]),
+                        "train_mmd_view1": (
+                            ""
+                            if (jres["train_mmd_view1"] != jres["train_mmd_view1"])
+                            else f"{jres['train_mmd_view1']:.5f}"
+                        ),
+                        "train_mmd_view2": (
+                            ""
+                            if (jres["train_mmd_view2"] != jres["train_mmd_view2"])
+                            else f"{jres['train_mmd_view2']:.5f}"
+                        ),
+                        "jaccard_reason": jres["reason"],
                         "detail_log": str(detail_log),
                         "error": "",
                     }
                     writer.writerow(row)
                     f_csv.flush()
 
+                    j_str = "n/a" if (jres["jaccard"] != jres["jaccard"]) else f"{jres['jaccard']:.3f}"
                     print(
                         f"    result: d1={d1_hat}, d2={d2_hat}, dj={dj_hat}, "
-                        f"p_hat={p_hat}, |err|={abs_error}, success={bool(passed)}, "
-                        f"time={runtime/60:.1f} min"
+                        f"p_hat={p_hat}, |err|={abs_error}, jaccard={j_str}, "
+                        f"success={bool(passed)}, time={runtime/60:.1f} min"
                     )
 
                 except Exception as e:
@@ -353,6 +400,11 @@ def main() -> None:
                         "abs_error": "",
                         "success": 0,
                         "runtime_sec": f"{runtime:.2f}",
+                        "jaccard": "",
+                        "shared_recovered": "",
+                        "train_mmd_view1": "",
+                        "train_mmd_view2": "",
+                        "jaccard_reason": "",
                         "detail_log": str(detail_log),
                         "error": err,
                     }
