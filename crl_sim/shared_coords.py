@@ -239,6 +239,21 @@ def recover_shared_indices(sigma_diag: np.ndarray, p_hat: int) -> np.ndarray:
     return np.sort(order[:p_hat]).astype(np.int64)
 
 
+def spectral_gap_at(sigma_diag: np.ndarray, p: int) -> float:
+    """Log-ratio gap between rank-p and rank-(p-1) entries of sorted sigma_diag.
+
+    Permutation-invariant: doesn't care which indices ended up shared, only how
+    well separated the p smallest are from the rest. Larger = cleaner Theorem-1
+    structure. Returns 0 when p is at a boundary of the sorted vector.
+    """
+    diag = np.asarray(sigma_diag, dtype=np.float64)
+    if diag.size == 0 or p <= 0 or p >= diag.size:
+        return 0.0
+    eps = max(1e-12, 1e-6 * float(np.max(np.abs(diag))))
+    sorted_diag = np.sort(np.maximum(diag, eps))
+    return float(np.log(sorted_diag[p]) - np.log(sorted_diag[p - 1]))
+
+
 def detect_p_via_elbow(sigma_diag: np.ndarray) -> Tuple[int, float]:
     """Detect p_hat directly from sorted diag(Sigma_{1|2}) by finding the
     largest log-gap between consecutive entries.
@@ -401,6 +416,16 @@ def jaccard_for_pipeline_run(
     recovered_elbow = recover_shared_indices(diag, p_hat_elbow)
     j_elbow = jaccard(recovered_elbow, ground_truth)
 
+    # 4. Permutation-invariant structural metric:
+    #    - p_count_error = |p_hat_elbow - p_true|: did the diagonal structure
+    #      correctly tell us how many shared coords there are?
+    #    - gap_at_true_p: how cleanly separated are the p_true smallest
+    #      diagonals from the rest? Higher = stronger Theorem-1 signal.
+    #    Both ignore which indices are shared (the recovered Ẑ is permuted
+    #    relative to ground truth, so index-level comparison is meaningless).
+    p_count_error = abs(int(p_hat_elbow) - int(p_true))
+    gap_true_p = spectral_gap_at(diag, p_true)
+
     return {
         "jaccard": float(j_recovered),
         "recovered": recovered.tolist(),
@@ -413,6 +438,9 @@ def jaccard_for_pipeline_run(
         "gap_strength": float(gap),
         "jaccard_elbow": float(j_elbow),
         "recovered_elbow": recovered_elbow.tolist(),
+
+        "p_count_error": int(p_count_error),
+        "gap_at_true_p": float(gap_true_p),
 
         "sigma_diag": [float(v) for v in diag.tolist()],
         "train_mmd_view1": float(train_mmd_1),
@@ -432,6 +460,8 @@ def _failed_result(ground_truth: List[int], reason: str) -> Dict[str, object]:
         "gap_strength": 0.0,
         "jaccard_elbow": float("nan"),
         "recovered_elbow": [],
+        "p_count_error": -1,
+        "gap_at_true_p": float("nan"),
         "sigma_diag": [],
         "train_mmd_view1": float("nan"),
         "train_mmd_view2": float("nan"),

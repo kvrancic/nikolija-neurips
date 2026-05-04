@@ -276,6 +276,10 @@ def main() -> None:
         "shared_recovered_true_p",
         "p_hat_elbow",            # auto-detected p_hat from diag(Sigma_{1|2})
         "jaccard_elbow", "shared_recovered_elbow", "elbow_gap",
+        # Permutation-invariant Theorem-1 metrics (the recovered Z is
+        # permuted relative to ground truth so these are the meaningful ones):
+        "p_count_error",          # |p_hat_elbow - p_true|
+        "gap_at_true_p",          # log-gap in diag(Sigma) at the true p
         "train_mmd_view1", "train_mmd_view2", "jaccard_reason",
         "detail_log", "error",
     ]
@@ -371,6 +375,12 @@ def main() -> None:
                         "shared_recovered_elbow": ",".join(str(i) for i in jres.get("recovered_elbow", [])),
                         "elbow_gap": ("" if (jres.get("gap_strength", 0.0) is None)
                                       else f"{jres.get('gap_strength', 0.0):.3f}"),
+                        "p_count_error": jres.get("p_count_error", ""),
+                        "gap_at_true_p": (
+                            ""
+                            if (jres.get("gap_at_true_p", float("nan")) != jres.get("gap_at_true_p", float("nan")))
+                            else f"{jres.get('gap_at_true_p', 0.0):.3f}"
+                        ),
                         "train_mmd_view1": (
                             ""
                             if (jres["train_mmd_view1"] != jres["train_mmd_view1"])
@@ -433,6 +443,8 @@ def main() -> None:
                         "jaccard_elbow": "",
                         "shared_recovered_elbow": "",
                         "elbow_gap": "",
+                        "p_count_error": "",
+                        "gap_at_true_p": "",
                         "train_mmd_view1": "",
                         "train_mmd_view2": "",
                         "jaccard_reason": "",
