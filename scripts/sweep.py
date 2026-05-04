@@ -269,8 +269,14 @@ def main() -> None:
         "d_obs", "degree",
         "d1_hat", "d2_hat", "dj_hat", "p_hat",
         "abs_error", "success", "runtime_sec",
-        # Theorem 1 / Jaccard:
-        "jaccard", "shared_recovered", "train_mmd_view1", "train_mmd_view2", "jaccard_reason",
+        # Theorem 1 / Jaccard, three flavours sharing the same Sigma_{1|2}:
+        "jaccard",                # at the recovered p_hat (real-world)
+        "shared_recovered",
+        "jaccard_true_p",         # at the *true* p (Theorem 1 math validation)
+        "shared_recovered_true_p",
+        "p_hat_elbow",            # auto-detected p_hat from diag(Sigma_{1|2})
+        "jaccard_elbow", "shared_recovered_elbow", "elbow_gap",
+        "train_mmd_view1", "train_mmd_view2", "jaccard_reason",
         "detail_log", "error",
     ]
 
@@ -353,8 +359,18 @@ def main() -> None:
                         "abs_error": abs_error,
                         "success": int(bool(passed)),
                         "runtime_sec": f"{runtime:.2f}",
-                        "jaccard": "" if (jres["jaccard"] != jres["jaccard"]) else f"{jres['jaccard']:.4f}",
-                        "shared_recovered": ",".join(str(i) for i in jres["recovered"]),
+                        "jaccard": ("" if (jres["jaccard"] != jres["jaccard"])
+                                    else f"{jres['jaccard']:.4f}"),
+                        "shared_recovered": ",".join(str(i) for i in jres.get("recovered", [])),
+                        "jaccard_true_p": ("" if (jres.get("jaccard_true_p", float("nan")) != jres.get("jaccard_true_p", float("nan")))
+                                           else f"{jres['jaccard_true_p']:.4f}"),
+                        "shared_recovered_true_p": ",".join(str(i) for i in jres.get("recovered_true_p", [])),
+                        "p_hat_elbow": jres.get("p_hat_elbow", ""),
+                        "jaccard_elbow": ("" if (jres.get("jaccard_elbow", float("nan")) != jres.get("jaccard_elbow", float("nan")))
+                                          else f"{jres['jaccard_elbow']:.4f}"),
+                        "shared_recovered_elbow": ",".join(str(i) for i in jres.get("recovered_elbow", [])),
+                        "elbow_gap": ("" if (jres.get("gap_strength", 0.0) is None)
+                                      else f"{jres.get('gap_strength', 0.0):.3f}"),
                         "train_mmd_view1": (
                             ""
                             if (jres["train_mmd_view1"] != jres["train_mmd_view1"])
@@ -411,6 +427,12 @@ def main() -> None:
                         "runtime_sec": f"{runtime:.2f}",
                         "jaccard": "",
                         "shared_recovered": "",
+                        "jaccard_true_p": "",
+                        "shared_recovered_true_p": "",
+                        "p_hat_elbow": "",
+                        "jaccard_elbow": "",
+                        "shared_recovered_elbow": "",
+                        "elbow_gap": "",
                         "train_mmd_view1": "",
                         "train_mmd_view2": "",
                         "jaccard_reason": "",
