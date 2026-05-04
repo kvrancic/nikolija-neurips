@@ -57,9 +57,13 @@ def regenerate_paired_data(
     seed: int,
     noise: str = "exponential",
     er_prob: float = 0.4,
+    return_z: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Recreate the (X1, X2) pair that run_full_pipeline_once produced for the
     same seed and config. Pure-deterministic given the seed; no model state.
+
+    If return_z=True, also returns the ground-truth view-1 latent Z1 = [Z_L, Z_{I_1}]
+    of shape (n, p+q1). Used by alignment-based metrics to score Theorem 1.
     """
     rng = np.random.RandomState(seed)
     W = sample_er_dag(p_true, q1, q2, er_prob, rng)
@@ -69,7 +73,58 @@ def regenerate_paired_data(
     zi2 = Z[:, p_true + q1 :]
     x1, _ = get_obs_and_G(zl, zi1, d_obs, degree, rng)
     x2, _ = get_obs_and_G(zl, zi2, d_obs, degree, rng)
+    if return_z:
+        z1_full = np.hstack([zl, zi1]).astype(np.float32)
+        return x1.astype(np.float32), x2.astype(np.float32), z1_full
     return x1.astype(np.float32), x2.astype(np.float32)
+
+
+def greedy_alignment(z_hat: np.ndarray, z_true: np.ndarray) -> Dict[int, int]:
+    """Greedy correlation-based alignment of recovered z_hat columns to ground-
+    truth z_true columns. Returns a dict mapping z_hat-index -> z_true-index.
+
+    Each iteration picks the strongest unmatched correlation pair and assigns it.
+    Numpy-only (no scipy). O((min(d_hat, d_true))^2) — small d, trivial.
+    """
+    n = z_hat.shape[0]
+    z_hat = z_hat.astype(np.float64)
+    z_true = z_true.astype(np.float64)
+    z_hat = (z_hat - z_hat.mean(0, keepdims=True)) / (z_hat.std(0, keepdims=True) + 1e-8)
+    z_true = (z_true - z_true.mean(0, keepdims=True)) / (z_true.std(0, keepdims=True) + 1e-8)
+    corr = np.abs((z_hat.T @ z_true) / max(n, 1))
+    work = corr.copy()
+    NEG_INF = -np.inf
+    matching: Dict[int, int] = {}
+    n_hat, n_true = work.shape
+    for _ in range(min(n_hat, n_true)):
+        if not np.isfinite(np.max(work)):
+            break
+        idx = np.unravel_index(int(np.argmax(work)), work.shape)
+        i, j = int(idx[0]), int(idx[1])
+        matching[i] = j
+        work[i, :] = NEG_INF
+        work[:, j] = NEG_INF
+    return matching
+
+
+def jaccard_aligned(
+    z1_hat: np.ndarray,
+    z1_true: np.ndarray,
+    recovered_shared_in_zhat: np.ndarray,
+    p_true: int,
+) -> Tuple[float, List[int]]:
+    """Map recovered shared indices in z_hat space to z_true space via greedy
+    alignment, then Jaccard against {0,...,p_true-1}.
+
+    Returns (jaccard, aligned_shared_in_z_true).
+    """
+    if len(recovered_shared_in_zhat) == 0:
+        ground_truth = list(range(p_true))
+        return jaccard([], ground_truth), []
+    matching = greedy_alignment(z1_hat, z1_true)
+    aligned = sorted({matching.get(int(i), -1) for i in recovered_shared_in_zhat} - {-1})
+    truth = list(range(p_true))
+    return jaccard(aligned, truth), aligned
 
 
 # =============================================================================
@@ -379,7 +434,9 @@ def jaccard_for_pipeline_run(
     if p_hat_clipped != p_hat:
         p_hat_note = f"input p_hat={p_hat} clipped to {p_hat_clipped}"
 
-    x1_np, x2_np = regenerate_paired_data(p_true, q1, q2, n, d_obs, degree, seed, noise=noise)
+    x1_np, x2_np, z1_true = regenerate_paired_data(
+        p_true, q1, q2, n, d_obs, degree, seed, noise=noise, return_z=True,
+    )
 
     flow1, G1, dev1, train_mmd_1 = train_view_flow(
         x1_np, d1_hat, degree,
@@ -426,6 +483,12 @@ def jaccard_for_pipeline_run(
     p_count_error = abs(int(p_hat_elbow) - int(p_true))
     gap_true_p = spectral_gap_at(diag, p_true)
 
+    # 5. Alignment-based Jaccard: map recovered z1-hat indices to z1-true indices
+    #    via greedy correlation matching, then Jaccard against {0,...,p_true-1}.
+    #    This is the principled metric — it's permutation-aware AND index-level.
+    j_aligned, aligned_shared = jaccard_aligned(z1, z1_true, recovered_elbow, p_true)
+    j_aligned_at_true_p, aligned_shared_at_true_p = jaccard_aligned(z1, z1_true, recovered_true_p, p_true)
+
     return {
         "jaccard": float(j_recovered),
         "recovered": recovered.tolist(),
@@ -441,6 +504,11 @@ def jaccard_for_pipeline_run(
 
         "p_count_error": int(p_count_error),
         "gap_at_true_p": float(gap_true_p),
+
+        "jaccard_aligned": float(j_aligned),
+        "aligned_shared": list(aligned_shared),
+        "jaccard_aligned_true_p": float(j_aligned_at_true_p),
+        "aligned_shared_true_p": list(aligned_shared_at_true_p),
 
         "sigma_diag": [float(v) for v in diag.tolist()],
         "train_mmd_view1": float(train_mmd_1),
@@ -462,6 +530,10 @@ def _failed_result(ground_truth: List[int], reason: str) -> Dict[str, object]:
         "recovered_elbow": [],
         "p_count_error": -1,
         "gap_at_true_p": float("nan"),
+        "jaccard_aligned": float("nan"),
+        "aligned_shared": [],
+        "jaccard_aligned_true_p": float("nan"),
+        "aligned_shared_true_p": [],
         "sigma_diag": [],
         "train_mmd_view1": float("nan"),
         "train_mmd_view2": float("nan"),

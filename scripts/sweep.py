@@ -280,6 +280,10 @@ def main() -> None:
         # permuted relative to ground truth so these are the meaningful ones):
         "p_count_error",          # |p_hat_elbow - p_true|
         "gap_at_true_p",          # log-gap in diag(Sigma) at the true p
+        # Alignment-based Jaccards (recovered z_hat -> z_true via greedy
+        # correlation matching, then index-level Jaccard against {0,..,p-1}):
+        "jaccard_aligned",        # at p_hat_elbow
+        "jaccard_aligned_true_p", # at p_true
         "train_mmd_view1", "train_mmd_view2", "jaccard_reason",
         "detail_log", "error",
     ]
@@ -381,6 +385,16 @@ def main() -> None:
                             if (jres.get("gap_at_true_p", float("nan")) != jres.get("gap_at_true_p", float("nan")))
                             else f"{jres.get('gap_at_true_p', 0.0):.3f}"
                         ),
+                        "jaccard_aligned": (
+                            ""
+                            if (jres.get("jaccard_aligned", float("nan")) != jres.get("jaccard_aligned", float("nan")))
+                            else f"{jres['jaccard_aligned']:.4f}"
+                        ),
+                        "jaccard_aligned_true_p": (
+                            ""
+                            if (jres.get("jaccard_aligned_true_p", float("nan")) != jres.get("jaccard_aligned_true_p", float("nan")))
+                            else f"{jres['jaccard_aligned_true_p']:.4f}"
+                        ),
                         "train_mmd_view1": (
                             ""
                             if (jres["train_mmd_view1"] != jres["train_mmd_view1"])
@@ -445,6 +459,8 @@ def main() -> None:
                         "elbow_gap": "",
                         "p_count_error": "",
                         "gap_at_true_p": "",
+                        "jaccard_aligned": "",
+                        "jaccard_aligned_true_p": "",
                         "train_mmd_view1": "",
                         "train_mmd_view2": "",
                         "jaccard_reason": "",
