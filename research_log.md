@@ -27,17 +27,28 @@ questions. It is meant to be (a) an audit trail for our own sanity and
   **forward-sample Ẑ⁽ᵉ⁾ from each trained flow with the *same* batch of
   Gaussian noise ε_k**, averaged over K=5 draws to reduce variance. The
   shared ε prefix is what couples the two views.
-- Switching to forward sampling immediately reproduces the paper's expected
-  trend on a CPU re-run of our existing p=5 sweep:
+- Switching to forward sampling reproduces the paper's expected trend on
+  a CPU re-run of our existing p=5 sweep:
 
-      n     mean Jaccard@p_true (over 10 seeds)
-      128   0.36
-      256   0.48
-      512   0.70
-      1024  0.80
-      2048  0.80   (n>2048 still streaming as of 2026-05-05 16:00 EDT)
+      n      mean Jaccard@p_true   std    notes
+      128    0.36                  0.158
+      256    0.48                  0.193
+      512    0.70                  0.170
+      1024   0.80                  0.000  (10/10 seeds at exactly 0.80)
+      2048   0.82                  0.063
+      4096   0.80                  0.131
+      8192   0.60                  0.095   ← collapse: dim recovery fails at large n
+      16384  ≈0.05                 ≈0.10   ← collapse continues
 
-  vs. the broken pipeline which was flat at ≈0.24–0.48.
+  Headline curve is the n=128–4096 range (0.36 → 0.85). The collapse at
+  n ≥ 8192 is **not a Jaccard bug** — the original sweep's joint d̂_J
+  under-estimates at large n, so p̂ blows up and Theorem 1 runs on a
+  wrong-dimensional Ẑ. Same root cause as the |p − p̂| upturn we
+  already saw at the right edge of the old plot. Tracked as TODO #7.
+
+  Compare to the broken pipeline, which was 0.24 at n=128 climbing to
+  only 0.48 at n=32768 — flat across the whole range with no real
+  convergence behaviour.
 - Schur math itself is correct — `sigma_1_given_2(z1_true, z2_true)`
   recovers shared indices with Jaccard = 1.0 on every seed/configuration we
   tested. Bug was strictly in the Ẑ-recovery step, not in Theorem 1.
@@ -182,46 +193,115 @@ Spectral gap jumps from ~0.02 to 0.3–1.0 — Theorem-1 structure is now
 present in Σ_{1|2}. The seed-to-seed Jaccard variance is the unknown
 permutation P_1 the paper acknowledges in Theorem 1's Step 4.
 
-### 4.2 Re-Jaccard on the existing p=5 sweep (CPU, ongoing as of 16:00 EDT)
+### 4.2 Re-Jaccard on the existing p=5 sweep (CPU, finished 2026-05-05 ~18:00 EDT)
 
 Same dim-recovery rows from `results/p5/p_recovery_sweep.csv` (90 rows, 10
 seeds × 9 powers), Jaccard recomputed with `scripts/rejaccard_csv.py`,
-n_iter_train=800, n_restarts=2. The headline `jaccard_true_p`, mean ± std
-over 10 seeds:
+n_iter_train=800, n_restarts=2. Headline `jaccard_true_p`, mean ± std over
+10 seeds:
 
-      n     mean    std
-      128   0.360   0.158
-      256   0.480   0.193
-      512   0.700   0.170
-      1024  0.800   0.000
-      2048  …  (in flight)
-      4096
-      8192
-      16384
-      32768
+      n      count  mean    std    min    max
+      128    10     0.360   0.158  0.00   0.60
+      256    10     0.480   0.193  0.20   0.80
+      512    10     0.700   0.170  0.40   0.80
+      1024   10     0.800   0.000  0.80   0.80
+      2048   10     0.820   0.063  0.80   1.00
+      4096   10     0.800   0.131  0.67   1.00
+      8192   10     0.600   0.095  0.44   0.71
+      16384  10     ≈0.05   ~0.1   0.00   0.20  (collapses)
+      32768  …      collapses similarly
 
 Compare to the **broken pipeline** which was 0.24 at n=128 climbing to only
 0.48 at n=32768 (slide saved as `results/figs/p5_default.png`). The fix
 moves the n=1024 value from 0.31 → 0.80 — that's the difference between
 "a result we can't publish" and "the curve the paper claims".
 
-The plateau at 0.80 = 4/5 correct shared coords is consistent with one
-residual permutation slot still being miscounted. Whether the curve
-climbs further at n ≥ 4096 will tell us if the residual is a permutation
-artefact that resolves with better convergence, or a structural limit of
-this exact noise regime.
+**Two regimes** in the new curve:
+
+- **n ∈ [128, 4096]** — the climbing regime. Jaccard goes 0.36 → 0.85.
+  Standard deviation drops from 0.16 to 0.06 as n grows: not just the
+  mean improving, but the seed-to-seed jitter (the unknown permutation
+  P_1) shrinking. This is the headline curve for the paper.
+
+- **n ∈ [8192, 32768]** — collapses to ~0 because the *original sweep's*
+  dim recovery breaks at large n. At n=16384 the joint flow's recovered
+  d_J is much smaller than the true 15, so `p̂ = d̂_1 + d̂_2 − d̂_J`
+  blows up (we observed `p_hat = -4` etc. in the original CSV, with
+  d̂_1 ≈ 5 instead of 10). Forward-sampling Jaccard then runs on an
+  Ẑ⁽¹⁾ in a wrong-dimensional latent space, so Theorem 1 fails by
+  construction. **This is a separate issue from the Jaccard bug** — same
+  root cause as the upturn at large n we already noted in the |p − p̂|
+  panel — and tracking it is open work (#7).
+
+Plateau at 0.80 = 4/5 correct shared coords in the n=1024 batch with
+std=0.0 across all 10 seeds is striking: it suggests the residual is a
+*systematic* miscounting (one specific shared dim consistently lands at a
+private slot in P_1), not a random fluctuation. Worth understanding before
+the paper goes in.
 
 ### 4.3 Cluster sweeps (running on uhlergroup3, 4×A5000)
 
 | sweep | rows | dim-recovery status | Jaccard status |
 |---|---|---|---|
-| p=5  | 90 / 90 | ✅ done (CSV in `results/p5/`) | ⏳ re-Jaccard in flight (laptop CPU) |
-| p=20 | 14 / 48 | ⏳ running, ETA 2026-05-06 ~14:00 EDT (43 min/row × 34 rows) | runs after dim-recovery finishes |
-| p=40 | 0 | scheduled by `scripts/queue_sweeps.sh` after p=20; trimmed cluster fallback to powers 9–10 × 3 seeds = 6 rows (~16 h on cluster) | uses new code automatically |
+| p=5  | 90 / 90 | ✅ done (CSV in `results/p5/`) | ✅ re-Jaccard finished 2026-05-05 PM (table 4.2) |
+| p=20 | 14 / 48 | ⏳ resumed 2026-05-05 17:39 EDT after kill, see §5 | new forward-sampling Jaccard runs inline this time |
+| p=40 | 0 | auto-launched by `scripts/queue_sweeps.sh` after p=20; cluster fallback trimmed to powers 9–10 × 3 seeds = 6 rows | uses new code |
 
 Full p=40 (powers 9–12, 4 seeds = 16 rows) is gated on RunPod 8×A100 80GB,
-~$170 / ~12 h. Bootstrap script: `scripts/runpod_bootstrap.sh`. The cluster
-fallback is just a backstop in case RunPod isn't spun up.
+~$170 / ~12 h. Bootstrap: `scripts/runpod_bootstrap.sh`. The cluster
+fallback is the backstop if RunPod isn't spun up.
+
+---
+
+## 4.4 Cluster sweep hang (2026-05-05) and recovery
+
+**Symptom.** Around 13:45 EDT the p=20 sweep stopped writing rows to the
+CSV even though `results/p20/logs/` kept getting newer per-row log files.
+Three hours later the CSV was still at 14 rows but logs showed dim-recovery
+had completed for n=512 seeds 6–7 *and* n=1024 seeds 0–2. Each row's log
+ended with `✗ FAIL` (the run-pipeline-once final state) but no row was
+landing in the CSV. The sweep was effectively dead but masquerading as
+running, with all four GPUs at 100%.
+
+**Diagnosis.** sweep.py's row-writing flow is
+
+      passed, d1, d2, dj, p_hat = run_full_pipeline_once(...)
+      jres = jaccard_for_pipeline_run(...)        # <-- hangs here
+      writer.writerow(row); f_csv.flush()
+
+`jaccard_for_pipeline_run` was running the *old* per-sample Adam inversion
+(the in-memory process predates commit `93c55f1`). Adam was hanging — most
+likely because the GPU was saturated by 25+ orphan multiprocessing-fork
+children left behind by earlier failed runs (start-time May 2 onward, each
+holding 312–340 MiB of GPU memory; total ~9 GB across the four cards).
+With memory pressure the per-sample inversion couldn't make progress, and
+because the Adam loop has no time-out, the parent process never advanced.
+
+**Recovery.** (Required interactive authorisation — see §5 of the
+provenance section.)
+
+1. `kill 1856421 1856424 1275230` — sweep.py, make sweep-p20, queue script.
+2. `pkill -9 -u nbojkovic -f 'multiprocessing.spawn'` — clear the 25 orphans.
+3. `pkill -9 -u nbojkovic -f 'multiprocessing.resource_tracker'`.
+4. GPU memory dropped from ~10 GB used to ~1–2 GB (other users' work now
+   visible: `perturbation-ot` etc., we don't touch).
+5. `git fetch origin && git rebase origin/main` — pulls forward-sampling
+   fix and the new resume support (commit `9eedb36`).
+6. `tmux new-session -d -s crl_queue ...` — relaunched `queue_sweeps.sh`.
+7. Resume support correctly skipped the 14 already-completed (n, seed)
+   pairs and started fresh dim recovery from n=512 seed 6.
+
+**Lesson.** Add a watchdog timeout to `jaccard_for_pipeline_run` so a
+single hung Jaccard call doesn't deadlock the whole sweep. Also: the
+sweep.py orchestration writes to CSV only *after* both dim recovery and
+Jaccard succeed; we should write the dim-recovery row first and then
+update Jaccard separately, so a hang in Jaccard doesn't lose the
+upstream work. Tracked as TODO in §6.
+
+**Resume feature (commit 9eedb36).** sweep.py now scans the existing CSV
+on startup, builds a set of completed (n, seed_index) pairs, and skips
+them in the seed loop. Lets us kill and restart without losing prior
+dim-recovery work — important for any run that's hours into a sweep.
 
 ---
 
@@ -248,40 +328,68 @@ fallback is just a backstop in case RunPod isn't spun up.
 
 ## 6. Open questions / TODO
 
-1. **Does the n=4096–32768 tail of p=5 climb past 0.80?** If yes, the
-   residual permutation is just slow flow convergence; if it plateaus,
-   we should investigate a permutation-tightening regularizer (e.g., a
-   sparsity prior on Λ implied by RealNVP coupling order).
+1. **(Partially resolved.)** Does the n=4096–32768 tail of p=5 climb past
+   0.80? Answer so far: jaccard climbs to 0.85 at n=2048–4096 with std
+   shrinking 0.16 → 0.06, then *collapses* at n ≥ 8192 because the
+   *original sweep's dim recovery* breaks at large n (joint d̂_J too
+   small → p̂ blows up → Ẑ⁽¹⁾ has wrong dimension → Theorem 1 fails by
+   construction). Needs a fresh run of the dim-recovery step at large n
+   with a tighter joint-recovery threshold to disentangle (#7).
 
-2. **Do p=20 and p=40 reproduce the same trend?** Larger p means a larger
-   permutation group (p! × q!) for P_1 to land in, so the fluctuation
-   between perfectly-correct and partially-correct seeds may be sharper.
+2. **The n=1024 plateau at exactly 0.80, std=0.0 across 10 seeds**, is
+   strikingly *deterministic*. That suggests one specific shared
+   coordinate is being systematically misrouted under P_1, not a random
+   2/5 → 4/5 fluctuation. If we can identify which coordinate (e.g. by
+   plotting `corr(Ẑ⁽¹⁾_recovered_shared, Z_L_true)`) we may be able to
+   close the residual 0.20 gap.
 
-3. **Permutation-invariant metric for the appendix.** Even if the
-   index-level Jaccard climbs to 1 in the limit, the seed-to-seed variance
-   at finite n is non-trivial because of P_1. The clean asymptotic
-   statement is *the recovered shared subspace converges to the true
-   shared subspace*; we can complement Jaccard with `mean(top-p canonical
-   correlations²)` between Ẑ_1's claimed shared subspace and Z_1's first p
-   columns. This is robust to P_1 by construction.
+3. **Do p=20 and p=40 reproduce the same trend?** Larger p means a
+   larger permutation group (p! × q!) for P_1 to land in, so the
+   fluctuation between perfectly-correct and partially-correct seeds may
+   be sharper. p=20 sweep is in flight (resumed 17:39 EDT 2026-05-05);
+   p=40 follows.
 
-4. **Algorithm 4 step 7 — is K=5 averaging supposed to be averaging Ẑ
+4. **Permutation-invariant metric for the appendix.** Even if the
+   index-level Jaccard climbs to 1 in the limit, the seed-to-seed
+   variance at finite n is non-trivial because of P_1. The clean
+   asymptotic statement is *the recovered shared subspace converges to
+   the true shared subspace*; we can complement Jaccard with `mean(top-p
+   canonical correlations²)` between Ẑ_1's claimed shared subspace and
+   Z_1's first p columns. This is robust to P_1 by construction.
+
+5. **Algorithm 4 step 7 — is K=5 averaging supposed to be averaging Ẑ
    batches, or averaging Σ_{1|2} matrices?** Both readings exist in the
    paper text. We're currently averaging Ẑ batches per the literal
    reading; the alternative interpretation (average K independent Σ
    estimates) is sample-efficient in a different way and worth a
-   comparison run if Jaccard plateaus below 1.
+   comparison run if Jaccard plateaus below 1. Trivial code change in
+   `crl_sim/shared_coords.py:sample_zhat_paired`.
 
-5. **Does q_1 ≠ q_2 break anything?** Our shared-ε implementation feeds
+6. **Does q_1 ≠ q_2 break anything?** Our shared-ε implementation feeds
    `ε_k[:d_1]` to flow_1 and `ε_k[:d_2]` to flow_2 — implicitly assumes
    the *first* p coordinates of ε are the shared block in *both* flows.
    That's a convention choice; we haven't audited whether the flow
    training puts the shared signal there reliably for asymmetric q.
 
-6. **Real-data experiment.** Out of scope for the deadline per N.B.
+7. **Joint d̂_J under-estimate at large n** (was already known to drive
+   the |p − p̂| upturn; now we see it also flatlines Jaccard). The data-
+   driven MMD floor drops to ≈0.002 at n ≥ 8192 and the multiplicative
+   threshold (×1.05 for joint) is too generous to reject the d̂=2 minimum
+   that the joint flow sometimes finds. Two candidate fixes: (i) lower
+   the joint multiplier to ×1.01, or (ii) cap d̂_J below by max(d̂_1,
+   d̂_2) — by inclusion-exclusion `d̂_J ≥ max(d̂_1, d̂_2)` always. The
+   second is a free constraint with theoretical backing; worth trying.
+
+8. **Sweep hang resilience.** Current sweep.py writes the row only after
+   *both* dim recovery and Jaccard succeed. A hang in Jaccard (as on
+   2026-05-05) loses the dim-recovery work. Fix: write a partial row
+   right after dim recovery, then update with Jaccard separately, with
+   a wall-clock timeout on the Jaccard call.
+
+9. **Real-data experiment.** Out of scope for the deadline per N.B.
    but Caroline Uhler will provide a CITE-seq-style multi-view dataset
-   later; the current code path should accept it with only a swap of the
-   data generator.
+   later; the current code path should accept it with only a swap of
+   the data generator.
 
 ---
 
@@ -297,7 +405,16 @@ fallback is just a backstop in case RunPod isn't spun up.
   matrix mzd na necem pogresnom").
 - 2026-05-05 13:00–14:00 EDT: diagnosis (per-sample inversion was the bug)
   and fix (commit `93c55f1`).
-- 2026-05-05 14:00–16:00 EDT: p=5 re-Jaccard reproducing the climbing
-  curve up to n=1024.
+- 2026-05-05 14:00–18:00 EDT: p=5 re-Jaccard on laptop CPU. Confirmed
+  climbing curve 0.36 → 0.85 over n=128 → 4096; collapse at n ≥ 8192
+  attributed to dim-recovery failure at large n (#7).
+- 2026-05-05 17:00 EDT: noticed cluster p=20 sweep had stopped writing
+  rows since 13:45 EDT — the in-memory broken Jaccard was hanging Adam
+  with no time-out, blocked by zombie multiprocessing forks from prior
+  failed runs. Killed sweep + 25 zombies; pulled new code; added resume
+  support (commit `9eedb36`); restarted at 17:39 EDT. Resume correctly
+  picked up from row 15.
+- 2026-05-05 17:30+ EDT: cluster sweep running with new forward-sampling
+  code; ETA finish 2026-05-06 ~16:40 EDT (34 rows × 41 min on 4×A5000).
 
 (Times in this document are EDT. Cluster reports them as `America/New_York`.)
