@@ -288,6 +288,22 @@ def main() -> None:
         "detail_log", "error",
     ]
 
+    # Resume support: if the CSV already exists with successful rows, skip
+    # any (n, seed_index) pairs already present. Lets us kill and restart a
+    # sweep without losing previous dim-recovery work.
+    done_keys = set()
+    if csv_path.exists():
+        try:
+            with csv_path.open("r", newline="") as f_existing:
+                reader = csv.DictReader(f_existing)
+                for r in reader:
+                    if r.get("status") == "ok":
+                        done_keys.add((int(r["n"]), int(r["seed_index"])))
+            if done_keys:
+                print(f"[resume] found {len(done_keys)} completed rows in {csv_path}; will skip those")
+        except Exception as e:
+            print(f"[resume] warning: failed to scan existing CSV ({e}); proceeding without skip")
+
     write_header = not csv_path.exists()
     with csv_path.open("a", newline="") as f_csv:
         writer = csv.DictWriter(f_csv, fieldnames=fieldnames)
@@ -301,6 +317,9 @@ def main() -> None:
         for power, n in zip(powers, ns):
             for seed_index in range(args.seeds_per_n):
                 counter += 1
+                if (n, seed_index) in done_keys:
+                    print(f"\n[{counter}/{total}] n=2^{power}={n}, seed_index={seed_index}: SKIP (already in CSV)")
+                    continue
                 seed = args.seed_offset + 100000 * power + seed_index
                 label = f"n{n}_seed{seed_index}"
                 detail_log = detail_dir / f"{label}.log"
