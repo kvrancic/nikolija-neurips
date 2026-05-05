@@ -207,9 +207,63 @@ def train_view_flow(
 
 
 # =============================================================================
-# 3. Per-sample inversion: recover paired Z-hats from observed X
+# 3. Forward-sampling paired Z-hats (Algorithm 4 step 7 from CRL paper)
 # =============================================================================
+# The paper's Algorithm 4 step 7 says:
+#   Sample Ẑ⁽ᵉ⁾ ← (1/K) Σ_k f_e(ε_k),  ε_k ~ N(0, I),  for e = 1, 2
+# Note ε_k has no `e` subscript — it is SHARED between the two flows. This
+# couples the views through common noise input: the first p coordinates of
+# ε_k are passed identically to both flows, which is what enables Theorem 1's
+# Σ_{1|2} to detect shared structure. Per-sample inversion of X via Adam was
+# tried previously but gives Ẑ with R²≈-40 vs true Z (the polynomial mixing
+# is highly non-injective); forward sampling avoids that pathology entirely.
 
+def sample_zhat_paired(
+    flow1: SimpleFlow,
+    flow2: SimpleFlow,
+    dev1: torch.device,
+    dev2: torch.device,
+    n_samples: int,
+    K: int,
+    d1: int,
+    d2: int,
+    seed: int = 0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Paper's Algorithm 4 step 7: forward sampling with shared ε batches,
+    averaged over K independent draws to reduce variance.
+
+    For each k in 1..K:
+      ε_k ∈ R^{n_samples × max(d1, d2)} ~ N(0, I)
+      Ẑ_1_k = flow_1(ε_k[:, :d1])
+      Ẑ_2_k = flow_2(ε_k[:, :d2])
+    Then Ẑ_e = (1/K) Σ_k Ẑ_e_k.
+
+    The shared prefix of ε is identical between the two flows, which is what
+    couples Ẑ_1 and Ẑ_2 so that Σ_{12} carries shared-coord information.
+
+    Returns (z1, z2) as float64 numpy arrays of shape (n_samples, d_e).
+    """
+    set_all_seeds(seed)
+    d_max = max(d1, d2)
+    z1_acc: Optional[np.ndarray] = None
+    z2_acc: Optional[np.ndarray] = None
+    flow1.eval()
+    flow2.eval()
+    with torch.no_grad():
+        for _ in range(K):
+            eps_full = torch.randn(n_samples, d_max, device=dev1)
+            eps1 = eps_full[:, :d1].to(dev1)
+            eps2 = eps_full[:, :d2].to(dev2)
+            z1k = flow1(eps1).cpu().numpy().astype(np.float64)
+            z2k = flow2(eps2).cpu().numpy().astype(np.float64)
+            z1_acc = z1k if z1_acc is None else (z1_acc + z1k)
+            z2_acc = z2k if z2_acc is None else (z2_acc + z2k)
+    assert z1_acc is not None and z2_acc is not None
+    return z1_acc / K, z2_acc / K
+
+
+# Legacy per-sample inversion — kept for diagnostic comparison only.
+# Forward sampling above is the production path.
 def recover_paired_z(
     x_np: np.ndarray,
     flow: SimpleFlow,
@@ -221,13 +275,9 @@ def recover_paired_z(
     eps_prior: float = 1e-3,
     seed: int = 0,
 ) -> np.ndarray:
-    """Per-sample inversion. We optimize epsilon_i ∈ R^d_hat for every observed
-    x_i so that x_i ≈ phi(flow(epsilon_i)) G^T after the same standardization
-    used at training time. The optimization variable is epsilon (not z directly)
-    so the resulting z = flow(epsilon) is automatically in the flow's range and
-    the L2 penalty on epsilon corresponds to the model's N(0, I) prior.
-
-    Returns z_hat ∈ R^(n × d_hat) as float32 numpy.
+    """DEPRECATED. Per-sample Adam inversion of x→ε; produces Ẑ with no linear
+    relation to true Z (R²≈-40) due to non-injectivity of the polynomial map.
+    Kept only for diagnostic comparison; production code uses sample_zhat_paired.
     """
     x_np = standardize_np(x_np.astype(np.float32))
     n = x_np.shape[0]
@@ -408,12 +458,14 @@ def jaccard_for_pipeline_run(
     noise: str = "exponential",
     gpu_id: Optional[int] = None,
     n_iter_train: int = 400,
-    n_iter_inv: int = 300,
+    n_iter_inv: int = 300,  # legacy — unused now that forward sampling is default
     n_samples: int = 768,
     lr: float = 1e-2,
-    inv_lr: float = 5e-2,
+    inv_lr: float = 5e-2,  # legacy — unused
     n_restarts: int = 2,
     sigmas: Sequence[float] = DEFAULT_SIGMAS,
+    schur_K: int = 5,
+    schur_n_eval: int = 4096,
 ) -> Dict[str, object]:
     """End-to-end Jaccard for one paired-data run, given the dimensions
     recovered upstream by run_full_pipeline_once.
@@ -449,8 +501,15 @@ def jaccard_for_pipeline_run(
         gpu_id=gpu_id, seed=seed * 13 + 2, n_restarts=n_restarts, sigmas=sigmas,
     )
 
-    z1 = recover_paired_z(x1_np, flow1, G1, degree, dev1, n_iter=n_iter_inv, lr=inv_lr, seed=seed * 13 + 3)
-    z2 = recover_paired_z(x2_np, flow2, G2, degree, dev2, n_iter=n_iter_inv, lr=inv_lr, seed=seed * 13 + 4)
+    # Paper's Algorithm 4 step 7: forward sample Ẑ from each flow with shared
+    # ε_k batches, averaged over K=5 draws. Replaces the previous per-sample
+    # Adam inversion which gave Ẑ uncorrelated with true Z (R²≈-40) due to
+    # the non-injectivity of degree-2 polynomial mixing.
+    z1, z2 = sample_zhat_paired(
+        flow1, flow2, dev1, dev2,
+        n_samples=schur_n_eval, K=schur_K,
+        d1=d1_hat, d2=d2_hat, seed=seed * 13 + 3,
+    )
 
     sigma = sigma_1_given_2(z1, z2)
     diag = np.diag(sigma)
@@ -483,11 +542,16 @@ def jaccard_for_pipeline_run(
     p_count_error = abs(int(p_hat_elbow) - int(p_true))
     gap_true_p = spectral_gap_at(diag, p_true)
 
-    # 5. Alignment-based Jaccard: map recovered z1-hat indices to z1-true indices
-    #    via greedy correlation matching, then Jaccard against {0,...,p_true-1}.
-    #    This is the principled metric — it's permutation-aware AND index-level.
-    j_aligned, aligned_shared = jaccard_aligned(z1, z1_true, recovered_elbow, p_true)
-    j_aligned_at_true_p, aligned_shared_at_true_p = jaccard_aligned(z1, z1_true, recovered_true_p, p_true)
+    # 5. Alignment-based Jaccard is not well-defined under forward sampling
+    #    (no pairing between fresh-ε Ẑ and the original Z_1). The paper's
+    #    Theorem 1 claims index-level identification *up to the unknown
+    #    permutation P_1*; with random P_1 the index-level Jaccard fluctuates
+    #    seed-by-seed. We report it as NaN here and rely on
+    #    jaccard / jaccard_true_p / p_count_error / gap_at_true_p instead.
+    j_aligned = float("nan")
+    j_aligned_at_true_p = float("nan")
+    aligned_shared: List[int] = []
+    aligned_shared_at_true_p: List[int] = []
 
     return {
         "jaccard": float(j_recovered),
