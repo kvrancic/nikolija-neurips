@@ -53,10 +53,11 @@ make sweep-p20 GPUS=0,1,2,3 2>&1 | tee "$LOG_DIR/sweep_p20_$(date +%Y%m%dT%H%M%S
 wait_for_csv results/p20/p_recovery_sweep.csv 48 "p=20"
 sleep 60
 
-echo "$(date -Iseconds) [queue] launching sweep-p40"
+echo "$(date -Iseconds) [queue] launching sweep-p40 (cluster fallback: powers 9-10, seeds 3 = 6 rows)"
 make sweep-p40 GPUS=0,1,2,3 2>&1 | tee "$LOG_DIR/sweep_p40_$(date +%Y%m%dT%H%M%S).log"
 
-# p=40 expects 20 rows (powers 9-12, seeds 5)
-wait_for_csv results/p40/p_recovery_sweep.csv 20 "p=40"
+# Cluster p=40 target trimmed to 6 rows (~16h on 4xA5000). Full sweep runs on
+# RunPod 8xA100 in parallel; this is just a backstop.
+wait_for_csv results/p40/p_recovery_sweep.csv 6 "p=40"
 
 echo "$(date -Iseconds) [queue] ALL DONE"

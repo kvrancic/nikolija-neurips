@@ -74,10 +74,26 @@ sweep-p20:
 	@./scripts/git_save_results.sh $(RESULTS)/p20 "results: p20 sweep done"
 
 .PHONY: sweep-p40
+# Cluster fallback only: 4×A5000 is too slow to finish the full p=40 sweep
+# before the deadline (≈55h for 20 rows). RunPod 8×A100 is the primary path
+# for p=40; this trimmed cluster target produces 6 small-n rows (~16h) as a
+# backstop in case RunPod doesn't happen. For the full sweep on RunPod, run:
+#   make sweep-p40-full GPUS=0,1,...,7 RESTARTS=8
 sweep-p40:
 	$(PY) scripts/sweep.py \
 	    --p-true 40 --q1 40 --q2 40 --degree 2 \
-	    --powers 9-12 --seeds-per-n 5 \
+	    --powers 9-10 --seeds-per-n 3 \
+	    --gpus $(GPUS) --n-restarts $(RESTARTS) \
+	    --n-iter $(N_ITER) --n-samples $(N_SAMPLES) \
+	    --out-dir $(RESULTS)/p40 --csv-name p_recovery_sweep.csv
+	@./scripts/git_save_results.sh $(RESULTS)/p40 "results: p40 sweep done"
+
+.PHONY: sweep-p40-full
+# Full p=40 sweep — only run on 8×A100 (RunPod). Powers 9-12, 4 seeds = 16 rows.
+sweep-p40-full:
+	$(PY) scripts/sweep.py \
+	    --p-true 40 --q1 40 --q2 40 --degree 2 \
+	    --powers 9-12 --seeds-per-n 4 \
 	    --gpus $(GPUS) --n-restarts $(RESTARTS) \
 	    --n-iter $(N_ITER) --n-samples $(N_SAMPLES) \
 	    --out-dir $(RESULTS)/p40 --csv-name p_recovery_sweep.csv

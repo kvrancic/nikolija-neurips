@@ -33,36 +33,45 @@ def load_rows(csv_path: Path) -> List[Dict[str, str]]:
     return rows
 
 
-def aggregate(rows: List[Dict[str, str]]) -> Tuple[List[int], List[float], List[float], List[float], List[float], int]:
-    """Return (ns_sorted, mae_mean, mae_se, jacc_mean, jacc_se, total_seeds)."""
+METRIC_KEYS = [
+    ("abs_error", "abs_err"),
+    ("p_count_error", "p_cnt_err"),
+    ("jaccard", "jacc_idx"),                      # legacy index-level
+    ("jaccard_true_p", "jacc_idx_true_p"),
+    ("jaccard_aligned", "jacc_aln"),
+    ("jaccard_aligned_true_p", "jacc_aln_true_p"),
+    ("gap_at_true_p", "gap_true_p"),
+]
+
+
+def aggregate(rows: List[Dict[str, str]]) -> Tuple[List[int], Dict[str, List[float]], Dict[str, List[float]], int]:
+    """Return (ns_sorted, mean_dict_keyed_by_short_name, se_dict, total_seeds)."""
     by_n: Dict[int, Dict[str, List[float]]] = {}
     for r in rows:
         n = int(r["n"])
-        by_n.setdefault(n, {"mae": [], "jacc": []})
-        if r.get("abs_error", "") != "":
-            by_n[n]["mae"].append(float(r["abs_error"]))
-        if r.get("jaccard", "") != "":
-            by_n[n]["jacc"].append(float(r["jaccard"]))
+        if n not in by_n:
+            by_n[n] = {short: [] for _, short in METRIC_KEYS}
+        for col, short in METRIC_KEYS:
+            v = r.get(col, "")
+            if v != "":
+                try:
+                    by_n[n][short].append(float(v))
+                except ValueError:
+                    pass
 
     ns = sorted(by_n.keys())
-    mae_mean, mae_se = [], []
-    jacc_mean, jacc_se = [], []
+    means: Dict[str, List[float]] = {short: [] for _, short in METRIC_KEYS}
+    ses: Dict[str, List[float]] = {short: [] for _, short in METRIC_KEYS}
+
     total = 0
-
     for n in ns:
-        mae_vals = by_n[n]["mae"]
-        jacc_vals = by_n[n]["jacc"]
-        total = max(total, len(mae_vals))
+        for col, short in METRIC_KEYS:
+            xs = by_n[n][short]
+            total = max(total, len(xs))
+            means[short].append(float(np.mean(xs)) if xs else float("nan"))
+            ses[short].append(float(np.std(xs, ddof=1) / math.sqrt(len(xs))) if len(xs) > 1 else 0.0)
 
-        mae_mean.append(float(np.mean(mae_vals)) if mae_vals else float("nan"))
-        mae_se.append(float(np.std(mae_vals, ddof=1) / math.sqrt(len(mae_vals)))
-                      if len(mae_vals) > 1 else 0.0)
-
-        jacc_mean.append(float(np.mean(jacc_vals)) if jacc_vals else float("nan"))
-        jacc_se.append(float(np.std(jacc_vals, ddof=1) / math.sqrt(len(jacc_vals)))
-                       if len(jacc_vals) > 1 else 0.0)
-
-    return ns, mae_mean, mae_se, jacc_mean, jacc_se, total
+    return ns, means, ses, total
 
 
 def plot_one(csv_path: Path, out_path: Path, title_suffix: str = "") -> None:
@@ -71,17 +80,19 @@ def plot_one(csv_path: Path, out_path: Path, title_suffix: str = "") -> None:
         print(f"  [{csv_path.name}] no successful rows; skipping.")
         return
 
-    ns, mae_mean, mae_se, jacc_mean, jacc_se, n_seeds = aggregate(rows)
+    ns, means, ses, n_seeds = aggregate(rows)
 
     p_true_set = sorted({int(r["p_true"]) for r in rows})
     p_label = ",".join(str(p) for p in p_true_set)
     title_p = f"p={p_label}{title_suffix}"
 
+    # Two-panel headline figure: |p - p_hat| (decreasing) and aligned Jaccard
+    # at the true p (the meaningful Theorem 1 metric — permutation-invariant
+    # via greedy correlation alignment of recovered Ẑ to ground-truth Z).
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
 
-    # MAE panel
     ax = axes[0]
-    ax.errorbar(ns, mae_mean, yerr=mae_se, marker="o", capsize=3, color="#1f77b4")
+    ax.errorbar(ns, means["abs_err"], yerr=ses["abs_err"], marker="o", capsize=3, color="#1f77b4")
     ax.set_xscale("log", base=2)
     ax.set_xlabel("Sample size n")
     ax.set_ylabel(r"Mean $|p - \hat{p}|$")
@@ -89,13 +100,13 @@ def plot_one(csv_path: Path, out_path: Path, title_suffix: str = "") -> None:
     ax.grid(True, alpha=0.3)
     ax.set_ylim(bottom=0)
 
-    # Jaccard panel
     ax = axes[1]
-    ax.errorbar(ns, jacc_mean, yerr=jacc_se, marker="o", capsize=3, color="#2ca02c")
+    ax.errorbar(ns, means["jacc_aln_true_p"], yerr=ses["jacc_aln_true_p"],
+                marker="o", capsize=3, color="#2ca02c")
     ax.axhline(1.0, linestyle="--", color="grey", alpha=0.5, label="perfect recovery")
     ax.set_xscale("log", base=2)
     ax.set_xlabel("Sample size n")
-    ax.set_ylabel("Jaccard similarity")
+    ax.set_ylabel("Aligned Jaccard at true p")
     ax.set_title(f"Shared-coord recovery (Theorem 1)  ({title_p})")
     ax.set_ylim(-0.05, 1.05)
     ax.grid(True, alpha=0.3)
@@ -108,6 +119,40 @@ def plot_one(csv_path: Path, out_path: Path, title_suffix: str = "") -> None:
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     print(f"  [{csv_path.name}] saved {out_path}  (ns={ns}, seeds={n_seeds})")
+
+    # Also save a "diagnostics" 6-panel grid so we can compare metrics.
+    diag_path = out_path.with_name(out_path.stem + "_diagnostics.png")
+    plot_diagnostics(ns, means, ses, n_seeds, csv_path.name, title_p, diag_path)
+    print(f"  [{csv_path.name}] saved {diag_path}")
+
+
+def plot_diagnostics(ns, means, ses, n_seeds, csv_name, title_p, out_path):
+    """Six-panel grid: every metric we track, with consistent x-axis."""
+    plot_specs = [
+        ("abs_err",          "Mean $|p - \\hat{p}|$",                "tab:blue",   None),
+        ("p_cnt_err",        "Count error $|\\hat{p}_{elbow} - p|$", "tab:orange", None),
+        ("jacc_aln_true_p",  "Aligned Jaccard at true p",            "tab:green",  (-0.05, 1.05)),
+        ("jacc_aln",         "Aligned Jaccard at $\\hat{p}_{elbow}$","tab:olive",  (-0.05, 1.05)),
+        ("jacc_idx_true_p",  "Index Jaccard at true p (no alignment)", "tab:gray",   (-0.05, 1.05)),
+        ("gap_true_p",       "Spectral log-gap at true p",           "tab:purple", None),
+    ]
+    fig, axes = plt.subplots(2, 3, figsize=(14, 7))
+    axes = axes.flatten()
+    for ax, (key, ylabel, color, ylim) in zip(axes, plot_specs):
+        ax.errorbar(ns, means[key], yerr=ses[key], marker="o", capsize=3, color=color)
+        ax.set_xscale("log", base=2)
+        ax.set_xlabel("n")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+        if ylim:
+            ax.set_ylim(*ylim)
+            if ylim == (-0.05, 1.05):
+                ax.axhline(1.0, linestyle="--", color="grey", alpha=0.4)
+    fig.suptitle(f"{title_p} — {csv_name} — {n_seeds} seeds per n", fontsize=10, alpha=0.7)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
 
 
 def main() -> int:
